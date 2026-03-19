@@ -572,6 +572,11 @@ def run_inference_process(
 
         from core.inference.inference import InferenceBackend
 
+        # inference.py가 unsloth를 import하면서 HF_HUB_ENABLE_HF_TRANSFER=1로 덮어씀
+        # → 재적용으로 hf_transfer(Rust) 비활성화 및 huggingface_hub 세션 재주입
+        from utils.ssl_patch import reapply_hf_hub_patch
+        reapply_hf_hub_patch()
+
         import transformers
 
         logger.info("Subprocess loaded transformers %s", transformers.__version__)

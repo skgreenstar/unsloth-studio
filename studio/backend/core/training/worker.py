@@ -238,6 +238,11 @@ def run_training_process(
             sys.path.insert(0, backend_path)
 
         from core.training.trainer import UnslothTrainer, TrainingProgress
+
+        # trainer.py가 unsloth를 import하면서 HF_HUB_ENABLE_HF_TRANSFER=1로 덮어씀 — 재적용
+        from utils.ssl_patch import reapply_hf_hub_patch
+        reapply_hf_hub_patch()
+
         from utils.paths import (
             ensure_dir,
             resolve_output_dir,

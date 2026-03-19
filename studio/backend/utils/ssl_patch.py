@@ -16,9 +16,9 @@ def apply_ssl_patch() -> None:
 
     아래 라이브러리 전체에 적용됩니다:
       - ssl / urllib  (ssl._create_default_https_context 교체)
-      - requests      (Session.request monkey-patch)
+      - requests      (Session.request monkey-patch + session.verify=False)
+      - huggingface_hub  (configure_http_backend로 전용 세션 주입)
       - httpx         (Client.__init__ / AsyncClient.__init__ monkey-patch)
-      - huggingface_hub, curl  (REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE 환경 변수)
       - urllib3       (InsecureRequestWarning 억제)
       - git, pip, Python subprocess (환경 변수로 자식 프로세스까지 커버)
     """
@@ -33,6 +33,8 @@ def apply_ssl_patch() -> None:
     os.environ["CURL_CA_BUNDLE"] = ""
     os.environ["REQUESTS_CA_BUNDLE"] = ""
     os.environ["HF_HUB_DISABLE_XET"] = "1"
+    # hf_transfer(Rust 기반)는 Python SSL 패치 미적용 — 비활성화
+    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
     # Python subprocess (urllib): PYTHONHTTPSVERIFY=0 으로 자식 프로세스도 커버
     os.environ["PYTHONHTTPSVERIFY"] = "0"
     # git clone (audio_codecs.py 등)
@@ -54,6 +56,26 @@ def apply_ssl_patch() -> None:
 
     _requests.Session.request = _no_ssl_verify
 
+    # ---- huggingface_hub 전용 세션 주입 ----
+    # configure_http_backend()로 hf_hub가 쓰는 세션을 직접 교체.
+    # requests.Session.request monkey-patch만으로는 hf_hub 내부 세션을
+    # 완전히 제어하지 못하는 경우가 있어 이 방법이 가장 확실합니다.
+    try:
+        from huggingface_hub import configure_http_backend
+
+        def _hf_no_ssl_backend() -> _requests.Session:
+            session = _requests.Session()
+            session.verify = False
+            return session
+
+        configure_http_backend(_hf_no_ssl_backend)
+    except Exception:
+        pass
+
+    # ---- unsloth import 후 재적용을 위한 마커 ----
+    # unsloth는 import 시점에 HF_HUB_ENABLE_HF_TRANSFER=1을 강제 설정합니다.
+    # worker에서 unsloth import 이후 reapply_hf_hub_patch()를 호출하세요.
+
     # ---- httpx monkey-patch ----
     try:
         import httpx
@@ -72,4 +94,28 @@ def apply_ssl_patch() -> None:
         httpx.Client.__init__ = _httpx_no_ssl_init
         httpx.AsyncClient.__init__ = _httpx_async_no_ssl_init
     except ImportError:
+        pass
+
+
+def reapply_hf_hub_patch() -> None:
+    """unsloth import 이후 huggingface_hub 패치를 재적용합니다.
+
+    unsloth는 import 시 HF_HUB_ENABLE_HF_TRANSFER=1을 강제 설정합니다.
+    unsloth를 import하는 코드(inference.py, trainer.py 등) import 직후 호출하세요.
+    """
+    # hf_transfer(Rust) 재비활성화
+    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+
+    # huggingface_hub 세션 재주입
+    try:
+        import requests as _requests
+        from huggingface_hub import configure_http_backend
+
+        def _hf_no_ssl_backend() -> _requests.Session:
+            session = _requests.Session()
+            session.verify = False
+            return session
+
+        configure_http_backend(_hf_no_ssl_backend)
+    except Exception:
         pass
