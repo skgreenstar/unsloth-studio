@@ -34,10 +34,16 @@ def apply_ssl_patch() -> None:
         # ---- urllib / ssl ----
         ssl._create_default_https_context = ssl._create_unverified_context
 
-        # ---- 환경 변수 (huggingface_hub, curl 등) ----
+        # ---- 환경 변수 (자식 프로세스에도 상속됨) ----
         os.environ["CURL_CA_BUNDLE"] = ""
         os.environ["REQUESTS_CA_BUNDLE"] = ""
         os.environ["HF_HUB_DISABLE_XET"] = "1"
+        # Python subprocess (urllib): PYTHONHTTPSVERIFY=0 으로 자식 프로세스도 커버
+        os.environ["PYTHONHTTPSVERIFY"] = "0"
+        # git clone (audio_codecs.py 등)
+        os.environ["GIT_SSL_NO_VERIFY"] = "true"
+        # pip install (worker.py의 transformers 5.x 설치 등)
+        os.environ["PIP_TRUSTED_HOST"] = "pypi.org files.pythonhosted.org pypi.python.org"
 
         # ---- urllib3 경고 억제 ----
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
