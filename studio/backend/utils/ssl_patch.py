@@ -12,40 +12,42 @@ import os
 
 
 def apply_ssl_patch() -> None:
-    """SSL 검증 비활성화 패치를 무조건 적용합니다.
-
-    아래 라이브러리 전체에 적용됩니다:
-      - ssl / urllib  (ssl._create_default_https_context 교체)
-      - requests      (Session.request monkey-patch + session.verify=False)
-      - huggingface_hub  (configure_http_backend로 전용 세션 주입)
-      - httpx         (Client.__init__ / AsyncClient.__init__ monkey-patch)
-      - urllib3       (InsecureRequestWarning 억제)
-      - git, pip, Python subprocess (환경 변수로 자식 프로세스까지 커버)
-    """
+    """SSL 검증 비활성화 패치를 무조건 적용합니다."""
     import ssl
 
     import urllib3
 
-    # ---- urllib / ssl ----
+    # ---- 1. ssl.SSLContext 자체를 패치 (urllib3 포함 모든 SSL 커버) ----
+    # requests/urllib3는 ssl._create_default_https_context가 아닌
+    # ssl.SSLContext를 직접 생성하므로 __init__을 패치해야 완전히 커버됨.
+    _orig_ssl_init = ssl.SSLContext.__init__
+
+    def _no_verify_ssl_init(self, protocol=ssl.PROTOCOL_TLS_CLIENT, *args, **kwargs):
+        _orig_ssl_init(self, protocol, *args, **kwargs)
+        self.check_hostname = False
+        self.verify_mode = ssl.CERT_NONE
+
+    ssl.SSLContext.__init__ = _no_verify_ssl_init
+
+    # ---- 2. urllib 기본 컨텍스트 교체 ----
     ssl._create_default_https_context = ssl._create_unverified_context
 
-    # ---- 환경 변수 (자식 프로세스에도 상속됨) ----
+    # ---- 3. 환경 변수 (자식 프로세스에도 상속됨) ----
     os.environ["CURL_CA_BUNDLE"] = ""
     os.environ["REQUESTS_CA_BUNDLE"] = ""
     os.environ["HF_HUB_DISABLE_XET"] = "1"
-    # hf_transfer(Rust 기반)는 Python SSL 패치 미적용 — 비활성화
+    # hf_transfer(Rust 기반)는 Python SSL 패치 미적용 — env var로 비활성화
+    # (huggingface_hub.constants.HF_HUB_ENABLE_HF_TRANSFER는 import 시 읽힘 →
+    #  reapply_hf_hub_patch()에서 모듈 상수를 직접 수정)
     os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
-    # Python subprocess (urllib): PYTHONHTTPSVERIFY=0 으로 자식 프로세스도 커버
     os.environ["PYTHONHTTPSVERIFY"] = "0"
-    # git clone (audio_codecs.py 등)
     os.environ["GIT_SSL_NO_VERIFY"] = "true"
-    # pip install (worker.py의 transformers 5.x 설치 등)
     os.environ["PIP_TRUSTED_HOST"] = "pypi.org files.pythonhosted.org pypi.python.org"
 
-    # ---- urllib3 경고 억제 ----
+    # ---- 4. urllib3 경고 억제 ----
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    # ---- requests monkey-patch ----
+    # ---- 5. requests monkey-patch ----
     import requests as _requests
 
     _orig_request = _requests.Session.request
@@ -56,10 +58,10 @@ def apply_ssl_patch() -> None:
 
     _requests.Session.request = _no_ssl_verify
 
-    # ---- huggingface_hub 전용 세션 주입 ----
-    # configure_http_backend()로 hf_hub가 쓰는 세션을 직접 교체.
-    # requests.Session.request monkey-patch만으로는 hf_hub 내부 세션을
-    # 완전히 제어하지 못하는 경우가 있어 이 방법이 가장 확실합니다.
+    # ---- 6. huggingface_hub 전용 세션 주입 ----
+    # apply_ssl_patch() 시점에 huggingface_hub를 먼저 import해두면
+    # unsloth가 나중에 HF_HUB_ENABLE_HF_TRANSFER=1로 env var를 바꿔도
+    # 이미 import된 huggingface_hub.constants 상수는 False로 유지됨.
     try:
         from huggingface_hub import configure_http_backend
 
@@ -72,11 +74,7 @@ def apply_ssl_patch() -> None:
     except Exception:
         pass
 
-    # ---- unsloth import 후 재적용을 위한 마커 ----
-    # unsloth는 import 시점에 HF_HUB_ENABLE_HF_TRANSFER=1을 강제 설정합니다.
-    # worker에서 unsloth import 이후 reapply_hf_hub_patch()를 호출하세요.
-
-    # ---- httpx monkey-patch ----
+    # ---- 7. httpx monkey-patch ----
     try:
         import httpx
 
@@ -103,8 +101,16 @@ def reapply_hf_hub_patch() -> None:
     unsloth는 import 시 HF_HUB_ENABLE_HF_TRANSFER=1을 강제 설정합니다.
     unsloth를 import하는 코드(inference.py, trainer.py 등) import 직후 호출하세요.
     """
-    # hf_transfer(Rust) 재비활성화
+    # env var 재설정 (자식 프로세스 상속용)
     os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+
+    # huggingface_hub 모듈 상수를 직접 수정
+    # (env var 변경은 이미 import된 상수에 무효 — 상수 자체를 False로 강제)
+    try:
+        import huggingface_hub.constants as _hf_constants
+        _hf_constants.HF_HUB_ENABLE_HF_TRANSFER = False
+    except Exception:
+        pass
 
     # huggingface_hub 세션 재주입
     try:
