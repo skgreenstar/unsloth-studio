@@ -19,6 +19,9 @@ backend_dir = Path(__file__).parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
+from utils.ssl_patch import apply_ssl_patch
+apply_ssl_patch()
+
 from loggers import get_logger
 
 logger = get_logger(__name__)

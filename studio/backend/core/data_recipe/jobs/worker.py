@@ -76,10 +76,18 @@ def run_job_process(
     Sends events to `event_queue`.
     """
     import os
+    import sys
+    from pathlib import Path
 
     os.environ["PYTHONWARNINGS"] = (
         "ignore"  # Suppress warnings at C-level before imports
     )
+
+    _backend = str(Path(__file__).resolve().parent.parent.parent.parent)
+    if _backend not in sys.path:
+        sys.path.insert(0, _backend)
+    from utils.ssl_patch import apply_ssl_patch
+    apply_ssl_patch()
 
     import warnings
     from loggers.config import LogConfig
