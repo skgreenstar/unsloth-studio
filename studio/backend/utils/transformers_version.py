@@ -125,12 +125,14 @@ def _check_tokenizer_config_needs_v5(model_name: str) -> bool:
     if model_name in _tokenizer_class_cache:
         return _tokenizer_class_cache[model_name]
 
+    import ssl
     import urllib.request
 
     url = f"https://huggingface.co/{model_name}/raw/main/tokenizer_config.json"
     try:
         req = urllib.request.Request(url, headers = {"User-Agent": "unsloth-studio"})
-        with urllib.request.urlopen(req, timeout = 10) as resp:
+        _ssl_ctx = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, timeout = 10, context = _ssl_ctx) as resp:
             data = json.loads(resp.read().decode())
         tokenizer_class = data.get("tokenizer_class", "")
         result = tokenizer_class in _TRANSFORMERS_5_TOKENIZER_CLASSES

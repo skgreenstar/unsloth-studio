@@ -6,23 +6,42 @@
 
 기업 네트워크의 SSL 검사 프록시(self-signed certificate) 환경에서
 모든 HTTP 라이브러리의 SSL 검증을 비활성화합니다.
+
+이 모듈은 import 시점에 즉시 핵심 SSL 패치를 적용합니다.
 """
 
 import os
+import ssl
+import sys
+
+# ── 모듈 import 시 즉시 적용 (함수 호출 전에도 효과 있음) ──
+# urllib / urllib.request 는 ssl._create_default_https_context 를 사용함
+ssl._create_default_https_context = ssl._create_unverified_context
+ssl.create_default_context = ssl._create_unverified_context  # type: ignore[assignment]
+
+# 환경 변수도 즉시 설정 (자식 프로세스 상속)
+os.environ["CURL_CA_BUNDLE"] = ""
+os.environ["REQUESTS_CA_BUNDLE"] = ""
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+os.environ["PYTHONHTTPSVERIFY"] = "0"
+os.environ["GIT_SSL_NO_VERIFY"] = "true"
+os.environ["PIP_TRUSTED_HOST"] = "pypi.org files.pythonhosted.org pypi.python.org"
+
+sys.stderr.write("[ssl_patch] SSL verification disabled at module import\n")
+sys.stderr.flush()
 
 
 def apply_ssl_patch() -> None:
     """SSL 검증 비활성화 패치를 무조건 적용합니다."""
-    import ssl
     import urllib3
-    import structlog
 
-    log = structlog.get_logger(__name__)
-    log.info("Applying SSL patch for corporate network")
+    sys.stderr.write("[ssl_patch] apply_ssl_patch() called\n")
+    sys.stderr.flush()
 
-    # ---- 1. urllib 기본 컨텍스트 교체 ----
+    # ---- 1. urllib 기본 컨텍스트 교체 (모듈 레벨에서 이미 적용됨, 재확인) ----
     ssl._create_default_https_context = ssl._create_unverified_context
-    ssl.create_default_context = ssl._create_unverified_context
+    ssl.create_default_context = ssl._create_unverified_context  # type: ignore[assignment]
 
     # ---- 2. urllib3 SSL 컨텍스트 생성 함수 패치 ----
     # urllib3는 ssl.SSLContext를 직접 조작하므로 create_urllib3_context를 패치해야 함.
@@ -49,19 +68,10 @@ def apply_ssl_patch() -> None:
     except Exception:
         pass
 
-    # ---- 3. 환경 변수 (자식 프로세스에도 상속됨) ----
-    os.environ["CURL_CA_BUNDLE"] = ""
-    os.environ["REQUESTS_CA_BUNDLE"] = ""
-    os.environ["HF_HUB_DISABLE_XET"] = "1"
-    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
-    os.environ["PYTHONHTTPSVERIFY"] = "0"
-    os.environ["GIT_SSL_NO_VERIFY"] = "true"
-    os.environ["PIP_TRUSTED_HOST"] = "pypi.org files.pythonhosted.org pypi.python.org"
-
-    # ---- 4. urllib3 경고 억제 ----
+    # ---- 3. urllib3 경고 억제 ----
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    # ---- 5. requests.adapters.HTTPAdapter.send 패치 (Session.request보다 직접적) ----
+    # ---- 4. requests.adapters.HTTPAdapter.send 패치 (Session.request보다 직접적) ----
     try:
         import requests.adapters as _adapters
 
@@ -75,7 +85,7 @@ def apply_ssl_patch() -> None:
     except Exception:
         pass
 
-    # ---- 6. requests.Session.request 패치 (이중 커버) ----
+    # ---- 5. requests.Session.request 패치 (이중 커버) ----
     try:
         import requests as _requests
 
@@ -89,7 +99,7 @@ def apply_ssl_patch() -> None:
     except Exception:
         pass
 
-    # ---- 7. huggingface_hub 전용 세션 주입 ----
+    # ---- 6. huggingface_hub 전용 세션 주입 ----
     # apply_ssl_patch() 시점에 hf_hub를 먼저 import해서 constants.HF_HUB_ENABLE_HF_TRANSFER를
     # False로 고정 (unsloth가 나중에 env var를 1로 바꿔도 이미 읽힌 상수는 영향 없음)
     try:
@@ -105,7 +115,7 @@ def apply_ssl_patch() -> None:
     except Exception:
         pass
 
-    # ---- 8. httpx 패치 ----
+    # ---- 7. httpx 패치 ----
     try:
         import httpx
 
@@ -125,7 +135,8 @@ def apply_ssl_patch() -> None:
     except ImportError:
         pass
 
-    log.info("SSL patch applied successfully")
+    sys.stderr.write("[ssl_patch] apply_ssl_patch() complete\n")
+    sys.stderr.flush()
 
 
 def reapply_hf_hub_patch() -> None:
@@ -156,3 +167,6 @@ def reapply_hf_hub_patch() -> None:
         configure_http_backend(_hf_no_ssl_backend)
     except Exception:
         pass
+
+    sys.stderr.write("[ssl_patch] reapply_hf_hub_patch() complete\n")
+    sys.stderr.flush()

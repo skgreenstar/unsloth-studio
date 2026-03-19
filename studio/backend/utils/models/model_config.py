@@ -713,7 +713,7 @@ def _detect_audio_from_tokenizer(
 
         for tok_path in paths_to_try:
             url = f"https://huggingface.co/{model_name}/resolve/main/{tok_path}"
-            resp = requests.get(url, headers = headers, timeout = 15)
+            resp = requests.get(url, headers = headers, timeout = 15, verify = False)
             if not resp.ok:
                 continue
 
