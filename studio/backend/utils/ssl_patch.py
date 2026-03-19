@@ -147,14 +147,48 @@ def reapply_hf_hub_patch() -> None:
     """
     os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
 
-    # huggingface_hub 모듈 상수를 직접 수정 (env var 변경은 이미 import된 상수에 무효)
+    # ---- A. hf_transfer (Rust) 모듈을 스텁으로 교체 ----
+    # hf_transfer는 Python SSL 패치를 우회하는 Rust 라이브러리임.
+    # sys.modules에서 교체하면 이후 호출 시 ImportError → 자동으로 requests 기반 경로로 폴백.
+    try:
+        import types as _types
+        _stub = _types.ModuleType("hf_transfer")
+        _stub.__version__ = "0.0.0-disabled"
+
+        def _disabled_download(*args, **kwargs):
+            raise RuntimeError("hf_transfer disabled for SSL compatibility")
+
+        _stub.download = _disabled_download
+        sys.modules["hf_transfer"] = _stub
+    except Exception:
+        pass
+
+    # ---- B. huggingface_hub 모듈 상수를 직접 수정 ----
+    # (env var 변경은 이미 import된 상수에 무효 — 모듈 속성 직접 수정 필요)
     try:
         import huggingface_hub.constants as _hf_constants
         _hf_constants.HF_HUB_ENABLE_HF_TRANSFER = False
     except Exception:
         pass
 
-    # huggingface_hub 세션 재주입
+    # ---- C. requests 패치 재적용 (unsloth가 덮어썼을 가능성 대비) ----
+    try:
+        import requests.adapters as _adapters
+
+        # 이미 패치된 경우 중복 패치 방지
+        if not getattr(_adapters.HTTPAdapter.send, "_ssl_patched", False):
+            _orig_send = _adapters.HTTPAdapter.send
+
+            def _no_ssl_adapter_send(self, request, **kwargs):
+                kwargs["verify"] = False
+                return _orig_send(self, request, **kwargs)
+
+            _no_ssl_adapter_send._ssl_patched = True
+            _adapters.HTTPAdapter.send = _no_ssl_adapter_send
+    except Exception:
+        pass
+
+    # ---- D. huggingface_hub 세션 재주입 ----
     try:
         import requests as _requests
         from huggingface_hub import configure_http_backend
@@ -168,5 +202,5 @@ def reapply_hf_hub_patch() -> None:
     except Exception:
         pass
 
-    sys.stderr.write("[ssl_patch] reapply_hf_hub_patch() complete\n")
+    sys.stderr.write("[ssl_patch] reapply_hf_hub_patch() complete — hf_transfer disabled\n")
     sys.stderr.flush()
