@@ -580,14 +580,15 @@ def run_inference_process(
         # ── 진단: SSL 패치 상태 확인 ──
         try:
             import huggingface_hub.constants as _hfc_diag
-            logger.info(
-                "SSL patch state: HF_HUB_ENABLE_HF_TRANSFER=%s env=%s hf_transfer_module=%s",
-                _hfc_diag.HF_HUB_ENABLE_HF_TRANSFER,
-                os.environ.get("HF_HUB_ENABLE_HF_TRANSFER"),
-                type(sys.modules.get("hf_transfer")).__name__,
+            _diag_msg = (
+                f"[SSL_DIAG] HF_HUB_ENABLE_HF_TRANSFER={_hfc_diag.HF_HUB_ENABLE_HF_TRANSFER}"
+                f" env={os.environ.get('HF_HUB_ENABLE_HF_TRANSFER')}"
+                f" hf_transfer_module={type(sys.modules.get('hf_transfer')).__name__}"
             )
+            print(_diag_msg, flush = True)
+            logger.info(_diag_msg)
         except Exception as _diag_exc:
-            logger.info("SSL patch diag failed: %s", _diag_exc)
+            print(f"[SSL_DIAG] failed: {_diag_exc}", flush = True)
 
         import transformers
 
